@@ -20,7 +20,6 @@ def __main__():
     result = json.dumps({"abi":abi}, indent=4, sort_keys=True)
 
     open(args.output, 'w').write(result)
-    # import ipdb; ipdb.set_trace()
 
 if __name__ == '__main__':
     __main__()

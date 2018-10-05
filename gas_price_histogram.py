@@ -13,9 +13,6 @@ from matplotlib import rcParams
 
 rcParams['font.family'] = 'monospace'
 
-# Exports transactions to a JSON file where each line
-# contains the data returned from the JSONRPC interface
-
 provider = Web3.HTTPProvider('https://mainnet.infura.io/')
 w3 = Web3(provider)
 

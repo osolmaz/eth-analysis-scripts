@@ -51,17 +51,18 @@ def __main__():
     # fomo3d_contract = w3.eth.contract(FOMO3D_CONTRACT_ADDRESS)
     contract = w3.eth.contract(addr, abi=contract_abi)
 
-    event_names = [i['name'] for i in contract.events._events]
-    filters = [contract.events.__dict__[name].createFilter(fromBlock=start_block, toBlock=end_block) for name in event_names]
-
+    filters = {}
+    for i in contract.events._events:
+        name = i['name']
+        filters[name] = contract.events.__dict__[name].createFilter(fromBlock=start_block, toBlock=end_block)
 
     block_event_dict = {}
     for i in range(start_block, end_block+1):
         block_event_dict[i] = {}
-        # for name in event_names:
-        #     block_event_dict[i][name] = 0
 
-    for filter_ in filters:
+    for event_name, filter_ in filters.items():
+
+        print('Getting %s events'%event_name)
         entries = filter_.get_all_entries()
 
         for entry in entries:
@@ -126,7 +127,7 @@ def __main__():
             bottom = [a+b for a,b in zip(bottom, Y)]
 
         ax.set_axisbelow(True)
-        ax.set_ylim(0, max(bottom)*1.05)
+        ax.set_ylim(0, max(max(bottom), 10)*1.05)
         ax.set_yticks(list(range(0, max(bottom)+1)))
         ax.grid()
 
