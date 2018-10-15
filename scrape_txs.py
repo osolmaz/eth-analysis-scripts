@@ -2,23 +2,30 @@
 import argparse
 import json
 import web3
+import sys
 import logging
 # import pymongo
-from pymongo import MongoClient
-from mnemonic import Mnemonic
 import progressbar
+
+from pymongo import MongoClient
+from bson import Decimal128
+
+from mnemonic import Mnemonic
 
 from datetime import datetime
 from web3 import Web3
 from hexbytes import HexBytes
 
+from helper import query_yes_no
+
 logging.basicConfig(level=logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-d', '--database', type=str, help='Name of the MongoDB database', required=True)
-parser.add_argument('-s', '--start-block', type=int, help='Start block', default=0)
-parser.add_argument('-e', '--end-block',  type=int, help='End block', default=w3.eth.blockNumber)
+parser.add_argument('-s', '--start-block', type=int, help='Start block')
+parser.add_argument('-e', '--end-block',  type=int, help='End block')
 parser.add_argument('--drop', action='store_true', help='Drop existing DB before scraping')
+parser.add_argument('--skip-confirmation', action='store_true', help='Skip asking for confirmation for dropping the DB')
 
 group = parser.add_mutually_exclusive_group()
 group.add_argument('-a', '--addr', type=str, help='Comma-separated list of addresses from and to which txs will be filtered')
@@ -33,8 +40,8 @@ def tx_to_dict(tx):
         else:
             result[key] = val
 
-    if 'value' in result: result['value'] *= 1e-18
-    if 'gasPrice' in result: result['gasPrice'] *= 1e-9
+    if 'value' in result: result['value'] = Decimal128(str(result['value']))
+    if 'gasPrice' in result: result['gasPrice'] = Decimal128(str(result['value']))
 
     return result
 
@@ -45,11 +52,25 @@ def __main__():
     # provider = Web3.IPCProvider()
     w3 = Web3(provider)
 
-    start_block = args.start_block
-    end_block = args.end_block
+    if args.start_block:
+        start_block = args.start_block
+    else:
+        start_block = 0
+
+    if args.end_block:
+        end_block = args.end_block
+    else:
+        end_block = w3.eth.blockNumber
 
     client = MongoClient()
-    client.drop_database(args.database)
+
+    if args.drop:
+        if not args.skip_confirmation:
+            if not query_yes_no('Are you sure you want to drop existing DB: '+args.database, default='no'):
+                sys.exit()
+
+        client.drop_database(args.database)
+
     db = client[args.database]
 
     tx_collection = db['transactions']
@@ -88,7 +109,7 @@ def __main__():
                 from_matches = False
 
             if to_matches or from_matches or filtered_addrs == []:
-                print('Found tx: %s'%tx['hash'].hex())
+                # print('Found tx: %s'%tx['hash'].hex())
 
                 tx_collection.insert_one(tx_to_dict(tx))
 

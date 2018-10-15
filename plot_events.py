@@ -2,11 +2,16 @@
 import argparse
 import json
 import web3
-from web3 import Web3
+import pymongo
+import progressbar
 
+from pymongo import MongoClient
 from hexbytes import HexBytes
 from statistics import mean
 from helper import etherscan_fetch_abi, chunks, fill_data
+from web3 import Web3
+from web3.utils.events import get_event_data
+
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -25,8 +30,10 @@ w3 = Web3(provider)
 parser = argparse.ArgumentParser()
 parser.add_argument('addr', type=str, help='Address to print the transactions for')
 parser.add_argument('-o', '--output', type=str, help="Path to the output plot", required=True)
-parser.add_argument('-s', '--start-block', type=int, help='Start block', default=0)
-parser.add_argument('-e', '--end-block',  type=int, help='End block', default=w3.eth.blockNumber)
+parser.add_argument('-d', '--database', type=str, help="Name of the MongoDB database containing transaction data", required=True)
+
+parser.add_argument('-s', '--start-block', type=int, help='Start block')
+parser.add_argument('-e', '--end-block',  type=int, help='End block')
 parser.add_argument('-b', '--batch-size',  type=int, help='Block batch size for the plots', default=20)
 
 
@@ -35,47 +42,72 @@ def __main__():
 
     addr = Web3.toChecksumAddress(args.addr)
 
-    start_block = args.start_block
-    end_block = args.end_block
+    client = MongoClient()
+    db = client[args.database]
 
-    # provider = Web3.IPCProvider('/home/onur/.ethereum/geth.ipc')
-    # provider = Web3.HTTPProvider('https://mainnet.infura.io/')
+    tx_collection = db['transactions']
+    txreceipt_collection = db['txreceipts']
+
+    if not args.start_block:
+        start_block = tx_collection.find().sort('blockNumber', pymongo.ASCENDING).next()['blockNumber']
+    else:
+        start_block = args.start_block
+
+    if not args.end_block:
+        end_block = tx_collection.find().sort('blockNumber', pymongo.DESCENDING).next()['blockNumber']
+    else:
+        end_block = args.end_block
+
+    # provider = Web3.IPCProvider()
     provider = Web3.WebsocketProvider('wss://mainnet.infura.io/ws/')
-
 
     w3 = Web3(provider)
 
-    # compiled_source = compile_source(open('fomo3d.sol').read())
     contract_abi = etherscan_fetch_abi(addr)
 
-    # fomo3d_contract = w3.eth.contract(FOMO3D_CONTRACT_ADDRESS)
     contract = w3.eth.contract(addr, abi=contract_abi)
 
-    filters = {}
-    for i in contract.events._events:
-        name = i['name']
-        filters[name] = contract.events.__dict__[name].createFilter(fromBlock=start_block, toBlock=end_block)
-
+    # Map events to blocks
     block_event_dict = {}
     for i in range(start_block, end_block+1):
         block_event_dict[i] = {}
 
-    for event_name, filter_ in filters.items():
+    # count = 0
+    for tx in tx_collection.find({'$or': [{'to': {'$eq':addr}}, {'from': {'$eq':addr}}]}):
+        block_number = tx['blockNumber']
+        tx_receipt = txreceipt_collection.find_one({'transactionHash': {'$eq': tx['hash']}})
 
-        print('Getting %s events'%event_name)
-        entries = filter_.get_all_entries()
+        if not tx_receipt:
+            print('Tx receipt not scraped, doing manually:', tx['hash'])
+            tx_receipt = w3.eth.getTransactionReceipt(tx['hash'])
 
-        for entry in entries:
-            name = entry['event']
-            block_number = entry['blockNumber']
+        if not tx_receipt['status'] == 1:
+            continue
 
-            if not name in block_event_dict[block_number]:
-                block_event_dict[block_number][name] = 0
+        for i in contract.events._events:
 
-            block_event_dict[block_number][name] += 1
+            name = i['name']
+
+            matching_abi = contract._find_matching_event_abi(name)
+
+            # n_matches = len(contract.events.__dict__[name]().processReceipt(tx_receipt))
+            # print(i['name'], len(contract.events.__dict__[name]().processReceipt(tx_receipt)))
+            for log in tx_receipt['logs']:
+
+                try:
+                    get_event_data(matching_abi, log)
+                    abi_matches = True
+                except:
+                    abi_matches = False
+
+                if log['address'] == addr and abi_matches:
+                    if not name in block_event_dict[block_number]:
+                        block_event_dict[block_number][name] = 0
+
+                    block_event_dict[block_number][name] += 1
+
 
     # Now plot
-
     batch_chunks = chunks(range(start_block, end_block+1), args.batch_size)
     batch_chunks = [list(i) for i in batch_chunks]
 
@@ -85,8 +117,9 @@ def __main__():
 
     pdf_file = PdfPages(args.output)
 
-    for batch in batch_chunks:
+    bar = progressbar.ProgressBar(max_value=end_block-start_block)
 
+    for batch in batch_chunks:
         fn_call_dict = {}
         figure = plt.figure()
 
@@ -104,6 +137,8 @@ def __main__():
         ax.set_title('Events for contract\n%s\nin blocks %d to %d'%(addr, batch[0], batch[-1]))
 
         for idx in batch:
+            bar.update(idx-start_block)
+
             for key, val in block_event_dict[idx].items():
                 if not key in fn_call_dict:
                     fn_call_dict[key] = {}
@@ -133,6 +168,7 @@ def __main__():
 
         pdf_file.savefig(figure)
 
+    bar.finish()
 
     pdf_file.close()
 
