@@ -41,7 +41,7 @@ def tx_to_dict(tx):
             result[key] = val
 
     if 'value' in result: result['value'] = Decimal128(str(result['value']))
-    if 'gasPrice' in result: result['gasPrice'] = Decimal128(str(result['value']))
+    if 'gasPrice' in result: result['gasPrice'] = Decimal128(str(result['gasPrice']))
 
     return result
 
@@ -119,6 +119,8 @@ def __main__():
                 tx_count += 1
 
     bar.finish()
+    txreceipts.create_index('transactionHash')
+
     logging.info('Finished importing %d txs from %d blocks'%(tx_count, end_block-start_block))
 
     # if len(lines) > 0:
