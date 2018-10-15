@@ -2,6 +2,8 @@ import requests
 import sys
 import json
 
+from web3.utils.events import get_event_data
+
 ABI_REQUEST_ENDPOINT = 'https://api.etherscan.io/api?module=contract&action=getabi&address='
 
 def etherscan_fetch_abi(addr):
@@ -75,3 +77,39 @@ def query_yes_no(question, default="yes"):
         else:
             sys.stdout.write("Please respond with 'yes' or 'no' "
                              "(or 'y' or 'n').\n")
+
+def get_abi_fn_from_tx(contract, tx):
+    if tx['input'] == '0x':
+        fn_name = '0x'
+    else:
+        fn_name = contract.decode_function_input(tx['input'])[0].fn_name
+
+    return fn_name
+
+def get_events_from_receipt(contract, tx_receipt):
+    result = {}
+
+    for i in contract.events._events:
+
+        name = i['name']
+
+        matching_abi = contract._find_matching_event_abi(name)
+
+        # n_matches = len(contract.events.__dict__[name]().processReceipt(tx_receipt))
+        # print(i['name'], len(contract.events.__dict__[name]().processReceipt(tx_receipt)))
+
+        for log in tx_receipt['logs']:
+
+            try:
+                get_event_data(matching_abi, log)
+                abi_matches = True
+            except:
+                abi_matches = False
+
+            if log['address'] == contract.address and abi_matches:
+                if not name in result:
+                    result[name] = 0
+
+                result[name] += 1
+
+    return result
