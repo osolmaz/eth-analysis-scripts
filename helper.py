@@ -16,7 +16,6 @@ def chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
-
 def fill_data(X, Y, start, end):
     X_ = list(range(start, end+1))
     Y_ = [ 0 for i in X_ ]
@@ -26,3 +25,18 @@ def fill_data(X, Y, start, end):
 
     return X_, Y_
 
+def diversity(txs):
+    unique_addresses = set()
+
+    for tx in txs:
+        if tx['to']:
+            unique_addresses.add(tx['to'].lower())
+        if tx['from']:
+            unique_addresses.add(tx['from'].lower())
+
+    if len(txs) > 0:
+        result = len(unique_addresses)/len(txs)/2
+    else:
+        result = 1
+
+    return result

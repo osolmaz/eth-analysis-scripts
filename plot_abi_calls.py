@@ -4,12 +4,14 @@ import json
 import web3
 from web3 import Web3
 from itertools import cycle
+import pymongo
+import progressbar
 
+from pymongo import MongoClient
 from web3 import Web3
 from hexbytes import HexBytes
 from statistics import mean
 from helper import etherscan_fetch_abi, chunks, fill_data
-
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -20,37 +22,42 @@ from matplotlib.backends.backend_pdf import PdfPages
 rcParams['font.family'] = 'monospace'
 rcParams['figure.figsize'] = 12, 9
 
-
-provider = Web3.HTTPProvider('https://mainnet.infura.io/')
-w3 = Web3(provider)
-
 parser = argparse.ArgumentParser()
 parser.add_argument('addr', type=str, help='Address to print the transactions for')
 parser.add_argument('-o', '--output', type=str, help="Path to the output plot", required=True)
-parser.add_argument('-s', '--start-block', type=int, help='Start block', default=0)
-parser.add_argument('-e', '--end-block',  type=int, help='End block', default=w3.eth.blockNumber)
+parser.add_argument('-d', '--database', type=str, help="Name of the MongoDB database containing transaction data", required=True)
+
+parser.add_argument('-s', '--start-block', type=int, help='Start block')
+parser.add_argument('-e', '--end-block',  type=int, help='End block')
 parser.add_argument('-b', '--batch-size',  type=int, help='Block batch size for the plots', default=20)
-
-
 
 def __main__():
     args = parser.parse_args()
 
     addr = Web3.toChecksumAddress(args.addr)
 
-    start_block = args.start_block
-    end_block = args.end_block
+    client = MongoClient()
+    db = client[args.database]
 
-    # provider = Web3.IPCProvider('/home/onur/.ethereum/geth.ipc')
-    # provider = Web3.HTTPProvider('https://mainnet.infura.io/')
+    tx_collection = db['transactions']
+    txreceipt_collection = db['txreceipts']
+
+    if not args.start_block:
+        start_block = tx_collection.find().sort('blockNumber', pymongo.ASCENDING).next()['blockNumber']
+    else:
+        start_block = args.start_block
+
+    if not args.end_block:
+        end_block = tx_collection.find().sort('blockNumber', pymongo.DESCENDING).next()['blockNumber']
+    else:
+        end_block = args.end_block
+
+    # provider = Web3.IPCProvider()
     provider = Web3.WebsocketProvider('wss://mainnet.infura.io/ws/')
-
     w3 = Web3(provider)
 
-    # compiled_source = compile_source(open('fomo3d.sol').read())
     contract_abi = etherscan_fetch_abi(addr)
 
-    # fomo3d_contract = w3.eth.contract(FOMO3D_CONTRACT_ADDRESS)
     contract = w3.eth.contract(addr, abi=contract_abi)
 
     # Create a colour code cycler e.g. 'C0', 'C1', etc.
@@ -66,6 +73,8 @@ def __main__():
 
     pdf_file = PdfPages(args.output)
     plot_style_dict = {}
+
+    bar = progressbar.ProgressBar(max_value=end_block-start_block)
 
     for batch in batch_chunks:
         fn_call_dict = {}
@@ -84,49 +93,40 @@ def __main__():
         ax.set_title('Fn calls for contract\n%s\nin blocks %d to %d'%(addr, batch[0], batch[-1]))
 
         for idx in batch:
-            print('Fetching block %d, remaining: %d, progress: %d%%'%(
-                idx, (end_block-idx), 100*(idx-start_block+1)/(end_block-start_block+1)))
+            bar.update(idx-start_block)
 
-            block = w3.eth.getBlock(idx, full_transactions=True)
+            txs = tx_collection.find({'$and':[{'blockNumber': {'$eq': idx}}, {'$or': [{'to': {'$eq':addr}}, {'from': {'$eq':addr}}]}]})
 
-            for tx in block.transactions:
-                if tx['to']:
-                    to_matches = tx['to'].lower() == addr.lower()
-                else:
-                    to_matches = False
+            for tx in txs:
 
-                if tx['from']:
-                    from_matches = tx['from'].lower() == addr.lower()
-                else:
-                    from_matches = False
+                tx = dict(tx)
+                tx_receipt = txreceipt_collection.find_one({'transactionHash': {'$eq': tx['hash']}})
 
-                if to_matches or from_matches:
-
-                    print('Found transaction with hash %s'%(tx['hash'].hex()[:8]+'...'))
-
-                    tx = dict(tx)
+                if not tx_receipt:
+                    print('Tx receipt not scraped, doing manually:', tx['hash'])
                     tx_receipt = w3.eth.getTransactionReceipt(tx['hash'])
+                    # raise Exception('Tx receipt not scraped:', tx['hash'])
 
-                    if tx['input'] == '0x':
-                        fn_name = '0x'
-                    else:
-                        fn_name = contract.decode_function_input(tx['input'])[0].fn_name
+                if tx['input'] == '0x':
+                    fn_name = '0x'
+                else:
+                    fn_name = contract.decode_function_input(tx['input'])[0].fn_name
 
-                    if not tx_receipt['status'] == 1:
-                        fn_name += " {failed}"
+                if not tx_receipt['status'] == 1:
+                    fn_name += " {failed}"
 
-                    if not fn_name in plot_style_dict:
-                        color_code = next(color_codes)
-                        plot_style_dict[fn_name] = {"color": color_code, "edgecolor":"black"}
-                        plot_style_dict[fn_name+" {failed}"] = {"color": color_code, "edgecolor":"black", "hatch":"/"}
+                if not fn_name in plot_style_dict:
+                    color_code = next(color_codes)
+                    plot_style_dict[fn_name] = {"color": color_code, "edgecolor":"black"}
+                    plot_style_dict[fn_name+" {failed}"] = {"color": color_code, "edgecolor":"black", "hatch":"/"}
 
-                    if not fn_name in fn_call_dict:
-                        fn_call_dict[fn_name] = {}
+                if not fn_name in fn_call_dict:
+                    fn_call_dict[fn_name] = {}
 
-                    if not idx in fn_call_dict[fn_name]:
-                        fn_call_dict[fn_name][idx] = 0
+                if not idx in fn_call_dict[fn_name]:
+                    fn_call_dict[fn_name][idx] = 0
 
-                    fn_call_dict[fn_name][idx] += 1
+                fn_call_dict[fn_name][idx] += 1
 
         bottom = [0 for i in batch]
 
@@ -149,6 +149,8 @@ def __main__():
         ax.grid()
 
         pdf_file.savefig(figure)
+
+    bar.finish()
 
     pdf_file.close()
 

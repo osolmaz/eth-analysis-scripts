@@ -1,6 +1,7 @@
 import copy
 from hexbytes import HexBytes
 
+# seed_words = open('mnemonic_words_shuffled.txt').read().split('\n')
 seed_words = open('mnemonic_words.txt').read().split('\n')
 seed_words.remove('')
 
@@ -89,7 +90,27 @@ class Mnemonic:
         return self.addr
 
 if __name__ == '__main__':
+    # test_addr = '0xa62142888aba8370742be823c1782d17a0389da1'
     test_addr = '0xa62142888aba8370742be823c1782d17a0389da1'
+
+    test_addrs = [
+        '0x85b463314d8177fdb2a590c6af321699e2d718cc',
+        '0x16b0c89b6c987fc1687c6c5d5f19f9f0543f2ba7',
+        '0xf054e6f785cbf6ca764d0bad1dcf47e12c070484',
+        '0xbfdfaef8656a810adb72d9ee2b30bd0e15aa0d5f',
+        '0x570436a62b6e5d1b54ec3d3ab9c21a979bf8dc2b',
+        '0xba6cf19a5fc9277f4e976b41a7789adc8cd1fefd',
+        '0x466b5222d47b8533f15a32ef9f82a3a9fd6f8b2f',
+        '0xbfdfaef8656a810adb72d9ee2b30bd0e15aa0d5f',
+        '0x077be25134037a10160e6f4bded4c17a4765508a',
+        '0x65ab6b69c47815b6bd89327ab67e19675212ad4a',
+        '0x16b0c89b6c987fc1687c6c5d5f19f9f0543f2ba7',
+        '0x20f81043f12dde4440ecc0b35156a1275f181653',
+        '0xba6cf19a5fc9277f4e976b41a7789adc8cd1fefd',
+        '0x077be25134037a10160e6f4bded4c17a4765508a',
+        '0x65ab6b69c47815b6bd89327ab67e19675212ad4a',
+        '0xbfdfaef8656a810adb72d9ee2b30bd0e15aa0d5f',
+    ]
 
     mnemonic = Mnemonic.from_addr(test_addr)
     print(mnemonic)
@@ -99,5 +120,12 @@ if __name__ == '__main__':
     print(mnemonic2.get_addr())
     print(mnemonic2.get_addr()==test_addr)
 
+
+    for addr in test_addrs:
+        mnemonic = Mnemonic.from_addr(addr)
+        print(mnemonic.get_trunc_str())
+
+
     # number = int(test_addr[2:], 16)
     # print(get_different_base_indices(number, 2048))
+    # import ipdb; ipdb.set_trace()
