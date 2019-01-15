@@ -45,10 +45,25 @@ def tx_to_dict(tx):
 
     return result
 
+def block_to_dict(tx):
+    result = {}
+    for key, val in tx.items():
+        if isinstance(val, HexBytes):
+            result[key] = val.hex()
+        else:
+            result[key] = val
+
+    if 'difficulty' in result: result['difficulty'] = Decimal128(str(result['difficulty']))
+    if 'totalDifficulty' in result: result['totalDifficulty'] = Decimal128(str(result['totalDifficulty']))
+
+    return result
+
+
 def __main__():
     args = parser.parse_args()
 
-    provider = Web3.HTTPProvider('https://mainnet.infura.io/')
+    provider = Web3.WebsocketProvider('wss://mainnet.infura.io/ws/')
+    # provider = Web3.HTTPProvider('https://mainnet.infura.io/')
     # provider = Web3.IPCProvider()
     w3 = Web3(provider)
 
@@ -64,7 +79,9 @@ def __main__():
 
     client = MongoClient()
 
-    if args.drop:
+    dbnames = client.list_database_names()
+
+    if args.drop and args.database in dbnames:
         if not args.skip_confirmation:
             if not query_yes_no('Are you sure you want to drop existing DB: '+args.database, default='no'):
                 sys.exit()
@@ -73,6 +90,7 @@ def __main__():
 
     db = client[args.database]
 
+    block_collection = db['blocks']
     tx_collection = db['transactions']
     txreceipt_collection = db['txreceipts']
 
@@ -92,6 +110,12 @@ def __main__():
         bar.update(idx-start_block)
 
         block = w3.eth.getBlock(idx, full_transactions=True)
+
+        block_without_tx = block_to_dict(block)
+        if 'transactions' in block_without_tx:
+            del block_without_tx['transactions']
+
+        block_collection.insert_one(block_without_tx)
 
         txs = block.transactions
 
@@ -119,7 +143,7 @@ def __main__():
                 tx_count += 1
 
     bar.finish()
-    txreceipts.create_index('transactionHash')
+    txreceipt_collection.create_index('transactionHash')
 
     logging.info('Finished importing %d txs from %d blocks'%(tx_count, end_block-start_block))
 

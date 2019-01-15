@@ -4,9 +4,11 @@ import web3
 import pymongo
 import progressbar
 
+from datetime import datetime
 from web3 import Web3
 from pymongo import MongoClient
-from helper import etherscan_fetch_abi, get_abi_fn_from_tx, get_events_from_receipt
+from statistics import mean
+from helper import etherscan_fetch_abi, get_abi_fn_from_tx, get_events_from_receipt, diversities
 
 parser = argparse.ArgumentParser()
 parser.add_argument('addr', type=str, help='Address to print the transactions for')
@@ -22,13 +24,17 @@ parser.add_argument('-b', '--batch-size',  type=int, help='Block batch size for 
 parser.add_argument('-f', '--file', type=str, help='File containing addresses from and to which txs will be filtered')
 
 def crop_hex(addr):
-    return addr[:4]+'…'+addr[-2:]
+    return addr[:5]+'…'+addr[-3:]
 
 def etherscan_tx_link(hash_):
     return 'https://etherscan.io/tx/'+hash_
 
 def etherscan_addr_link(addr):
     return 'https://etherscan.io/address/'+addr
+
+def etherscan_block_link(block_number):
+    return 'https://etherscan.io/block/'+str(block_number)
+
 
 def __main__():
     args = parser.parse_args()
@@ -40,6 +46,7 @@ def __main__():
 
     tx_collection = db['transactions']
     txreceipt_collection = db['txreceipts']
+    block_collection = db['blocks']
 
     if not args.start_block:
         start_block = tx_collection.find().sort('blockNumber', pymongo.ASCENDING).next()['blockNumber']
@@ -112,28 +119,56 @@ td, th {
     bar = progressbar.ProgressBar(max_value=end_block-start_block)
 
     for block_number in range(start_block, end_block+1):
-        ofile.write('<h1>Block %d</h1>\n'%block_number)
+        block = block_collection.find_one({'number': {'$eq': block_number}})
+        txs = [i for i in tx_collection.find({'blockNumber': {'$eq': block_number}})]
+        tx_receipts = [i for i in txreceipt_collection.find({'blockNumber': {'$eq': block_number}})]
+
+        tx_receipt_dict = {}
+        for i in tx_receipts:
+            tx_receipt_dict[i['transactionHash']] = i
+
+        from_diversity, to_diversity = diversities(txs)
+        gas_prices = [int(tx['gasPrice'].to_decimal())*1e-9 for tx in txs]
+        gas_used_list = [tx_receipt_dict[tx['hash']]['gasUsed'] for tx in txs]
+        gas_limits = [tx['gas'] for tx in txs]
+        eth_spent_on_gas_list = [float(tx['gasPrice'].to_decimal())*tx_receipt['gasUsed']*1e-18 for tx, tx_receipt in zip(txs, tx_receipts)]
+        values = [int(tx['value'].to_decimal())*1e-18 for tx in txs]
+
+
+        ofile.write('<h1><a href="%s">Block %d</a></h1>\n'%(etherscan_block_link(block_number), block_number))
+        ofile.write('<p>%s, ts:%d</p>\n'%(datetime.utcfromtimestamp(block['timestamp']).strftime('%Y-%m-%d %H:%M:%S'), block['timestamp']))
+        # ofile.write('<p>From diversity: %d%%, To diversity: %d%%</p>\n'%(int(from_diversity*100), int(to_diversity*100)))
+        ofile.write('<p>Average gas price: %.1f Gwei</p>\n'%(mean(gas_prices)))
+
         ofile.write( \
 '''<table>
 <tr>
-<th>To</th>
+<th>Idx</th>
 <th>From</th>
+<th>To</th>
 <th>Hash</th>
+<th>ETH sent</th>
 <th>Gas Price<br>[Gwei]</th>
-<th>Gas Used<br>[ETH]</th>
+<th>Gas Limit</th>
+<th>Gas Used</th>
+<th>ETH spent<br>on gas</th>
 <th>ABI Call</th>
 <th>Events</th>
 </tr>
 ''')
         bar.update(block_number-start_block)
 
-        txs = tx_collection.find({'blockNumber': {'$eq': block_number}})
         for tx in txs:
 
-            tx_receipt = txreceipt_collection.find_one({'transactionHash': {'$eq': tx['hash']}})
+            # tx_receipt = txreceipt_collection.find_one({'transactionHash': {'$eq': tx['hash']}})
+            tx_receipt = tx_receipt_dict[tx['hash']]
 
             if addr in [tx['to'], tx['from']]:
-                abi_fn = get_abi_fn_from_tx(contract, tx)
+                try:
+                    abi_fn = get_abi_fn_from_tx(contract, tx)
+                except:
+                    abi_fn = None
+
                 event_dict = get_events_from_receipt(contract, tx_receipt)
                 events = ', '.join(event_dict.keys())
 
@@ -154,6 +189,9 @@ td, th {
             else:
                 ofile.write('<tr>\n')
 
+
+            ofile.write('<td>%d</td>\n'%(tx['transactionIndex']))
+
             if tx['from']:
                 ofile.write('<td><a href="%s">%s</a></td>\n'%(
                     etherscan_addr_link(tx['from']), crop_hex(tx['from'])))
@@ -166,23 +204,23 @@ td, th {
             else:
                 ofile.write('<td></td>\n')
 
-            if tx['hash']:
-                ofile.write('<td><a href="%s">%s</a></td>\n'%(
-                    etherscan_tx_link(tx['hash']), crop_hex(tx['hash'])))
-            else:
-                ofile.write('<td></td>\n')
+            ofile.write('<td><a href="%s">%s</a></td>\n'%(
+                etherscan_tx_link(tx['hash']), crop_hex(tx['hash'])))
 
-            if tx['gasPrice']:
-                gas_price = int(tx['gasPrice'].to_decimal())*1e-9
-                ofile.write('<td>%.1f</td>\n'%(gas_price))
-            else:
-                ofile.write('<td></td>\n')
+            value = int(tx['value'].to_decimal())*1e-18
+            ofile.write('<td>%g</td>\n'%(value))
 
-            if tx_receipt['gasUsed'] and tx['gasPrice']:
-                gas_used = float(tx['gasPrice'].to_decimal())*tx_receipt['gasUsed']*1e-18
-                ofile.write('<td>%f</td>\n'%(gas_used))
-            else:
-                ofile.write('<td></td>\n')
+            gas_price = int(tx['gasPrice'].to_decimal())*1e-9
+            ofile.write('<td>%.1f</td>\n'%(gas_price))
+
+            gas_limit = tx['gas']
+            ofile.write('<td>{:,}</td>\n'.format(gas_limit))
+
+            gas_used = tx_receipt['gasUsed']
+            ofile.write('<td>{:,}</td>\n'.format(gas_used))
+
+            eth_spent_on_gas = float(tx['gasPrice'].to_decimal())*tx_receipt['gasUsed']*1e-18
+            ofile.write('<td>%g</td>\n'%(eth_spent_on_gas))
 
             if abi_fn:
                 ofile.write('<td>%s</td>\n'%(abi_fn))
@@ -195,15 +233,27 @@ td, th {
                 ofile.write('<td></td>\n')
 
 
+            ofile.write('</tr>\n')
 
 
-
-            ofile.write('</td>\n')
+        ofile.write('<tr>\n')
+        ofile.write('<th></th>\n')
+        ofile.write('<th></th>\n')
+        ofile.write('<th></th>\n')
+        ofile.write('<th></th>\n')
+        ofile.write('<th>%g</th>\n'%(sum(values)))
+        ofile.write('<th>%g</th>\n'%(sum(gas_prices)))
+        ofile.write('<th>{:,}</th>\n'.format(sum(gas_limits)))
+        ofile.write('<th>{:,}</th>\n'.format(sum(gas_used_list)))
+        ofile.write('<th>%g</th>\n'%(sum(eth_spent_on_gas_list)))
+        ofile.write('<th></th>\n')
+        ofile.write('<th></th>\n')
+        ofile.write('</tr>\n')
 
 
         # print(len(txs))
 
-        ofile.write('''</table>''')
+        ofile.write('''</table>\n''')
 
 
     ofile.write('''

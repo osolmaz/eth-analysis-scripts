@@ -28,23 +28,45 @@ def fill_data(X, Y, start, end):
 
     return X_, Y_
 
-def diversity(txs):
-    unique_addresses = set()
+# def diversity(txs):
+#     unique_addresses = set()
+
+#     for tx in txs:
+#         if tx['to']:
+#             unique_addresses.add(tx['to'].lower())
+#         if tx['from']:
+#             unique_addresses.add(tx['from'].lower())
+
+#     if len(txs) > 0:
+#         result = len(unique_addresses)/len(txs)/2
+#     else:
+#         result = 1
+
+#     return result
+
+
+def diversities(txs):
+    unique_to = set()
+    unique_from = set()
 
     for tx in txs:
         if tx['to']:
-            unique_addresses.add(tx['to'].lower())
+            unique_to.add(tx['to'].lower())
         if tx['from']:
-            unique_addresses.add(tx['from'].lower())
+            unique_from.add(tx['from'].lower())
 
-    if len(txs) > 0:
-        result = len(unique_addresses)/len(txs)/2
+    if len(txs) > 1:
+        to_result = (len(unique_to)-1)/(len(txs)-1)
     else:
-        result = 1
+        to_result = 0.
 
-    return result
+    if len(txs) > 1:
+        from_result = (len(unique_from)-1)/(len(txs)-1)
+    else:
+        from_result = 0.
 
-import sys
+    return from_result, to_result
+
 
 def query_yes_no(question, default="yes"):
     """Ask a yes/no question via raw_input() and return their answer.
